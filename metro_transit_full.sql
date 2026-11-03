@@ -2201,23 +2201,81 @@ on p.passenger_id = tb.passenger_id
 inner join trains t 
 on tb.train_id = t.train_id
 group by 
--- Q24. Rank all bookings by fare in descending order. Hint: RANK() OVER (ORDER BY ...) 
 
--- Q25. Rank bookings by fare separately within each train. Hint: PARTITION BY
+-- Q24. Rank all bookings by fare in descending order. Hint: RANK() OVER (ORDER BY ...) 
+select booking_id,fare,
+dense_rank() over (partition by booking_id order by fare desc) as total_fare
+from ticketbookings;
+
+ -- Q25. Rank bookings by fare separately within each train. Hint: PARTITION BY
+select booking_id,train_id,fare,
+dense_rank() over (partition by train_id order by fare desc)
+from ticketbookings;
 
 -- Q26. For each passenger's bookings ordered by booking_date, show the previous booking's fare. Hint: LAG() 
-
--- Q27. Label each booking as 'High Fare' (above 100), 'Medium Fare' (50-100), or 'Low Fare' (below 50). Hint: CASE statement 
+select booking_id,booking_date,fare,
+lag(fare) over (partition by booking_id order by booking_date 
+rows between 1 preceding and current row) as total_fare
+from ticketbookings;
+ 
+ -- Q27. Label each booking as 'High Fare' (above 100), 'Medium Fare' (50-100), or 'Low Fare' (below 50). Hint: CASE statement 
+select booking_id,fare,
+case 
+when fare > 100 then 'High Fare'
+when fare between 50 and 100 then 'Medium Fare'
+else 'Low Fare'
+end as fare_range
+from ticketbookings;
 
 -- Q28. Start a transaction, delete a booking, confirm it's gone, then undo the deletion. Hint: ROLLBACK
+delete from ticketbookings
+where booking_id = 1490;
+# booking_id deleted
+
+select * from ticketbookings 
+where booking_id = 1490;
+# confirmed the deletion 
+
+rollback;
+select * from ticketbookings 
+where booking_id = 1490;
+
+INSERT INTO TicketBookings (booking_id, passenger_id, train_id, boarding_station_id, destination_station_id, booking_date, fare, seat_class, travel_time_minutes) 
+VALUES
+(1490, 255, 13, 12, 25, '2026-06-09', 89.62, 'General', 21);
 
 -- Q29. Create an index to speed up searches that filter bookings by passenger_id. Hint: CREATE INDEX
-
+create index idex_passenger_id on ticketbookings (passenger_id);
+select * from ticketbookings 
+where booking_id = 1490;
 -- Q30. Rank each passenger's bookings by fare, giving the same rank to equal fares without leaving gaps in the ranking sequence. Hint: DENSE_RANK() 
+select booking_id,passenger_id,fare,
+dense_rank() over (partition by passenger_id order by fare) as fare_rank
+from ticketbookings;
 
 --  Q31. For each boarding station, rank the bookings made from it by fare, highest first. Hint: PARTITION BY (window function) 
+select booking_id,boarding_station_id,fare,
+dense_rank() over (partition by boarding_station_id order by fare desc) as fare_rank
+from ticketbookings;
 
 -- Q32. For each passenger's bookings ordered by booking_date, show the next booking's fare next to the current one. Hint: LEAD() 
+select passenger_id,booking_id,booking_date,fare,
+lead(fare) over (partition by passenger_id order by booking_date) 
+as nextbooking_fare
+from ticketbookings;
+-- Q33. For each train, calculate a running total of fare collected, ordered by booking_date, using only the current and previous row. Hint: Window frame - ROWS BETWEEN 1 PRECEDING AND CURRENT ROW 
+select train_id,booking_id,booking_date,fare,
+sum(fare) over (partition by train_id order by booking_date rows between 1 preceding and current row)
+as fare_total
+from ticketbookings;
+
+-- Q34. Create a composite index on boarding_station_id and destination_station_id together, then view all indexes on the TicketBookings table. Hint: Composite index + SHOW INDEX 
+create index idx_boarding_destination
+on ticketbookings (boarding_station_id, destination_station_id);
+show index from ticketbookings;
+select * from ticketbookings
+where boarding_station_id = 10
+and destination_station_id = 20;
 
 -- Q33. For each train, calculate a running total of fare collected, ordered by booking_date, using only the current and previous row. Hint: Window frame - ROWS BETWEEN 1 PRECEDING AND CURRENT ROW 
 
