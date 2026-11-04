@@ -2110,19 +2110,19 @@ select count(distinct booking_id) as total_bookings
 from ticketbookings
 where month(booking_date)=6 and year(booking_date)= 2026;
 
--- Q11. Find the day name (Monday, Tuesday, etc.) for each booking_date. Hint: DAYNAME() 
+-- Q11. Find the day name (Monday, Tuesday, etc.) for each booking_date.
 select booking_id,dayname(booking_date) as days
 from ticketbookings;
 
--- Q12. Find how many days ago each booking was made, counting from today. Hint: DATEDIFF() 
+-- Q12. Find how many days ago each booking was made, counting from today. 
 select booking_date,curdate(),datediff(curdate(),booking_date) as total_days
 from ticketbookings;
 
--- Q13. Add 30 days to each booking_date to find a hypothetical renewal date. Hint: DATE_ADD() 
+-- Q13. Add 30 days to each booking_date to find a hypothetical renewal date. 
 select booking_date,date_add(booking_date,interval 30 day) as renweal_date
 from ticketbookings;
 
--- Q14. List every booking along with the passenger's name and the train name used. Hint: JOIN across TicketBookings, Passengers, and Trains 
+-- Q14. List every booking along with the passenger's name and the train name used.  
 select tb.booking_id,p.passenger_name,t.train_name
 from trains t
 inner join ticketbookings tb
@@ -2130,7 +2130,7 @@ on t.train_id = tb.train_id
 inner join passengers p 
 on tb.passenger_id = p.passenger_id;
 
--- Q15. Find the total number of bookings made for each train. Hint: JOIN + GROUP BY 
+-- Q15. Find the total number of bookings made for each train. 
 select train_name,count(distinct booking_id) as total_bookings
 from trains 
 inner join ticketbookings
@@ -2138,7 +2138,7 @@ on trains.train_id = ticketbookings.train_id
 group by train_name
 order by total_bookings desc;
 
--- Q16. Find trains that have been booked more than 60 times. Hint: GROUP BY + HAVING 
+-- Q16. Find trains that have been booked more than 60 times.  
 select train_name,count(distinct booking_id) as total_bookings
 from trains 
 inner join ticketbookings
@@ -2147,7 +2147,7 @@ group by train_name
 having total_bookings > 60
 order by total_bookings desc;
 
--- Q17. Find the total fare collected at each boarding station. Hint: JOIN Stations on boarding_station_id + GROUP BY 
+-- Q17. Find the total fare collected at each boarding station.  
 select boarding_station_id,sum(fare) as total_fare
 from ticketbookings
 inner join stations
@@ -2155,26 +2155,26 @@ on ticketbookings.boarding_station_id = stations.station_id
 group by  boarding_station_id
 order by total_fare desc;
 
--- Q18. Find stations that have never been used as a boarding station. Hint: LEFT JOIN with WHERE ... IS NULL
+-- Q18. Find stations that have never been used as a boarding station.
 select station_name,boarding_station_id
 from stations
 inner join ticketbookings
 on station_id = boarding_station_id
 where boarding_station_id is null;
 
--- Q19. Find all bookings made by the passenger named 'Nisha Singh'. Hint: Subquery in WHERE 
+-- Q19. Find all bookings made by the passenger named 'Nisha Singh'.  
 select *
 from ticketbookings
 where passenger_id = (select passenger_id from passengers
                       where passenger_name ='Nisha Singh');
                       
--- Q20. Find all bookings made on trains belonging to 'Line 3' or 'Line 5'. Hint: Subquery with IN 
+-- Q20. Find all bookings made on trains belonging to 'Line 3' or 'Line 5'.  
 select booking_id
 from ticketbookings
 where train_id in (select train_id from trains
                     where route_line in ('Line 3' or 'Line 5'));
                    
--- Q21. Using a CTE, find the total fare collected per passenger. Hint: Basic CTE 
+-- Q21. Using a CTE, find the total fare collected per passenger. 
 with totalfare as(
 select passenger_id,sum(fare) as total_fare
 from ticketbookings
@@ -2182,7 +2182,7 @@ group by passenger_id)
 select * from totalfare
 order by total_fare desc;
 
--- Q22. Using a CTE joined with Passengers, show passenger name alongside their total number of bookings. Hint: CTE with JOIN 
+-- Q22. Using a CTE joined with Passengers, show passenger name alongside their total number of bookings.
 with passengerbookings as (
 select passenger_name,count(booking_id) as total_bookings
 from passengers
@@ -2192,7 +2192,7 @@ group by passenger_name)
 select * from passengerbookings
 order by total_bookings desc;
 
--- Q23. Create a view that shows booking_id, passenger name, train name, and fare for every booking. Hint: CREATE VIEW with JOIN 
+-- Q23. Create a view that shows booking_id, passenger name, train name, and fare for every booking.  
 create view passengerdetails as 
 select ctb.fare
 from passengers p
@@ -2202,23 +2202,23 @@ inner join trains t
 on tb.train_id = t.train_id
 group by 
 
--- Q24. Rank all bookings by fare in descending order. Hint: RANK() OVER (ORDER BY ...) 
+-- Q24. Rank all bookings by fare in descending order. 
 select booking_id,fare,
 dense_rank() over (partition by booking_id order by fare desc) as total_fare
 from ticketbookings;
 
- -- Q25. Rank bookings by fare separately within each train. Hint: PARTITION BY
+ -- Q25. Rank bookings by fare separately within each train. 
 select booking_id,train_id,fare,
 dense_rank() over (partition by train_id order by fare desc)
 from ticketbookings;
 
--- Q26. For each passenger's bookings ordered by booking_date, show the previous booking's fare. Hint: LAG() 
+-- Q26. For each passenger's bookings ordered by booking_date, show the previous booking's fare. 
 select booking_id,booking_date,fare,
 lag(fare) over (partition by booking_id order by booking_date 
 rows between 1 preceding and current row) as total_fare
 from ticketbookings;
  
- -- Q27. Label each booking as 'High Fare' (above 100), 'Medium Fare' (50-100), or 'Low Fare' (below 50). Hint: CASE statement 
+ -- Q27. Label each booking as 'High Fare' (above 100), 'Medium Fare' (50-100), or 'Low Fare' (below 50). 
 select booking_id,fare,
 case 
 when fare > 100 then 'High Fare'
@@ -2227,7 +2227,7 @@ else 'Low Fare'
 end as fare_range
 from ticketbookings;
 
--- Q28. Start a transaction, delete a booking, confirm it's gone, then undo the deletion. Hint: ROLLBACK
+-- Q28. Start a transaction, delete a booking, confirm it's gone, then undo the deletion. 
 delete from ticketbookings
 where booking_id = 1490;
 # booking_id deleted
@@ -2244,32 +2244,32 @@ INSERT INTO TicketBookings (booking_id, passenger_id, train_id, boarding_station
 VALUES
 (1490, 255, 13, 12, 25, '2026-06-09', 89.62, 'General', 21);
 
--- Q29. Create an index to speed up searches that filter bookings by passenger_id. Hint: CREATE INDEX
+-- Q29. Create an index to speed up searches that filter bookings by passenger_id.
 create index idex_passenger_id on ticketbookings (passenger_id);
 select * from ticketbookings 
 where booking_id = 1490;
--- Q30. Rank each passenger's bookings by fare, giving the same rank to equal fares without leaving gaps in the ranking sequence. Hint: DENSE_RANK() 
+-- Q30. Rank each passenger's bookings by fare, giving the same rank to equal fares without leaving gaps in the ranking sequence.  
 select booking_id,passenger_id,fare,
 dense_rank() over (partition by passenger_id order by fare) as fare_rank
 from ticketbookings;
 
---  Q31. For each boarding station, rank the bookings made from it by fare, highest first. Hint: PARTITION BY (window function) 
+--  Q31. For each boarding station, rank the bookings made from it by fare, highest first. 
 select booking_id,boarding_station_id,fare,
 dense_rank() over (partition by boarding_station_id order by fare desc) as fare_rank
 from ticketbookings;
 
--- Q32. For each passenger's bookings ordered by booking_date, show the next booking's fare next to the current one. Hint: LEAD() 
+-- Q32. For each passenger's bookings ordered by booking_date, show the next booking's fare next to the current one. 
 select passenger_id,booking_id,booking_date,fare,
 lead(fare) over (partition by passenger_id order by booking_date) 
 as nextbooking_fare
 from ticketbookings;
--- Q33. For each train, calculate a running total of fare collected, ordered by booking_date, using only the current and previous row. Hint: Window frame - ROWS BETWEEN 1 PRECEDING AND CURRENT ROW 
+-- Q33. For each train, calculate a running total of fare collected, ordered by booking_date, using only the current and previous row. 
 select train_id,booking_id,booking_date,fare,
 sum(fare) over (partition by train_id order by booking_date rows between 1 preceding and current row)
 as fare_total
 from ticketbookings;
 
--- Q34. Create a composite index on boarding_station_id and destination_station_id together, then view all indexes on the TicketBookings table. Hint: Composite index + SHOW INDEX 
+-- Q34. Create a composite index on boarding_station_id and destination_station_id together, then view all indexes on the TicketBookings table.  
 create index idx_boarding_destination
 on ticketbookings (boarding_station_id, destination_station_id);
 show index from ticketbookings;
@@ -2277,6 +2277,16 @@ select * from ticketbookings
 where boarding_station_id = 10
 and destination_station_id = 20;
 
--- Q33. For each train, calculate a running total of fare collected, ordered by booking_date, using only the current and previous row. Hint: Window frame - ROWS BETWEEN 1 PRECEDING AND CURRENT ROW 
+-- Q33. For each train, calculate a running total of fare collected, ordered by booking_date, using only the current and previous row.
+select train_id,booking_id,booking_date,fare,
+sum(fare) over (partition by train_id order by booking_date rows between 1 preceding and current row)
+as fare_total
+from ticketbookings;
 
--- Q34. Create a composite index on boarding_station_id and destination_station_id together, then view all indexes on the TicketBookings table. Hint: Composite index + SHOW INDEX 
+-- Q34. Create a composite index on boarding_station_id and destination_station_id together, then view all indexes on the TicketBookings table. 
+create index idx_boarding_destination
+on ticketbookings (boarding_station_id, destination_station_id);
+show index from ticketbookings;
+select * from ticketbookings
+where boarding_station_id = 10
+and destination_station_id = 20;
