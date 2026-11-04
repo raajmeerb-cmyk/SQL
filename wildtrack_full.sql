@@ -2,6 +2,8 @@
    WILDTRACK CONSERVATION ALLIANCE DATABASE
    Full dataset - 10,000 rows across 4 tables
    ============================================================ */
+create database project_2;
+use project_2;
 
 CREATE TABLE Reserves (
     reserve_id INT PRIMARY KEY,
@@ -10087,4 +10089,653 @@ INSERT INTO GPSLogs (log_id, animal_id, log_datetime, latitude, longitude, speed
 (9758, 198, '2026-01-24 15:38:47', 32.855473, 80.337718, 15.97, 30.7, 44),
 (9759, 67, '2026-04-06 12:01:45', 9.709487, 87.824981, 5.77, 30.7, 51),
 (9760, 17, '2026-02-19 17:25:20', 13.14849, 72.848311, 44.16, 13.4, 44);
+
+
+select * from gpslogs;
+select * from animals;
+select * from species;
+select * from reserves;
+
+
+# 1. A researcher's fieldwork contract has just ended, and their access to the database needs to be fully withdrawn with immediate effect. 
+-- a. Create the user
+CREATE USER 'researcher_username'@'localhost' IDENTIFIED BY 'StrongPassword123';
+
+-- b. Grant privileges (read-only)
+GRANT SELECT ON WildTrack.* TO 'researcher_username'@'localhost';
+
+-- c. Revoke All Privileges (to withdraw access)
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'researcher_username'@'localhost';
+
+-- d. Drop the User Completely
+DROP USER 'researcher_username'@'localhost';
+
+-- 2. Group all GPS pings by the animal they belong to, and flag animals with fewer than 5 total pings recorded so far — their collars might be malfunctioning.
+ select a.animal_id,count(g.log_id) as total_logs,
+ case 
+ when count(g.log_id) < 5 then 'yes'
+ else 'no'
+ end as pings
+ from animals a
+ inner join gpslogs g
+ on a.animal_id = g.animal_id
+ group by a.animal_id;
+ 
+ -- 3. Some reserves may not have a single animal collared yet. Identify exactly which ones, since this is a coverage gap worth flagging to the programme director.
+ select r.reserve_name,r.reserve_id
+ from reserves r 
+ inner join animals a 
+ on a.reserve_id = r.reserve_id
+ where a.animal_id is null;
+ 
+-- 4. The steering committee wants to know, in one number, how many distinct species are currently being monitored across all reserves combined.
+select count(distinct species_id) as total_species
+from animals;
+
+-- 5. An intern wants to flag any reserve name that's unusually long (more than 25 characters) so it can be shortened for the mobile app's limited screen space.
+ select reserve_name
+ from reserves
+ where length(reserve_name) > 25;
+ 
+ -- 6. Sort each animal's estimated age into 'Juvenile', 'Adult', or 'Senior' bands using sensible thresholds, to help the biology team study age distribution across 
+ -- the population. 
+ select animal_id,estimated_age, 
+ case when estimated_age < 18 then 'Juvenile'
+ when estimated_age > 18 and estimated_age < 40 then 'Adult'
+ else 'Senior'
+ end as age_distrubition
+ from animals;
+
+-- 7. For each reserve, smooth out momentary sensor glitches by calculating an average battery level using only the current reading and the two immediately before it.
+select r.reserve_name,r.reserve_id,l.log_datetime,
+avg(l.battery_level_pct) over (partition by r.reserve_id order by l.log_datetime rows between 2 preceding and current row) as avg_bt
+from reserves r 
+inner join animals a 
+on r.reserve_id = a.reserve_id
+inner join gpslogs l 
+on l.animal_id = a.animal_id
+group by r.reserve_name,r.reserve_id,l.log_datetime,l.battery_level_pct;
+
+-- 8. Break this into two steps: first find each animal's most recent log date, then use that to identify which animals haven't reported anything in the last 10 days. 
+select max(log_datetime) as recent
+from gpslogs;
+
+with RecentLogs as (
+select a.animal_id,
+max(g.log_datetime) as Recent_log_date
+from animals a
+inner join gpslogs g
+on a.animal_id = g.animal_id
+group by a.animal_id)
+select animal_id,Recent_log_date
+from RecentLogs 
+where Recent_log_date < date_sub(curdate(),interval 10 day);
+
+SELECT
+    MIN(log_datetime) AS First_log,
+    MAX(log_datetime) AS Latest_log
+FROM GPSLogs;
+
+-- 9. Some tag codes were typed with inconsistent capitalization by different rangers over the years. Produce a clean, uniformly capitalized list for the tracking dashboard. 
+select animal_id,tag_code,
+upper(tag_code) as Capital_tag_code
+from animals;
+
+-- 10. First tally each species' total tracked population, then bring in reserve details to see which reserves are hosting the heaviest concentrations of the most 
+-- vulnerable species. 
+with SpeciesPopulation as 
+(select species_id,
+count(animal_id) as Total_tracked_population
+from Animals
+group by species_id),
+ReserveConcentration as 
+(select species_id,reserve_id,
+count(animal_id) as Reserve_animal_count
+from Animals
+group by species_id,reserve_id)
+select s.species_name,s.conservation_status,r.reserve_name,
+sp.Total_tracked_population,rc.Reserve_animal_count
+from ReserveConcentration rc 
+inner join Species s 
+on rc.species_id = s.species_id
+inner join Reserves r 
+on rc.reserve_id = r.reserve_id
+inner join SpeciesPopulation sp
+on rc.species_id = sp.species_id 
+where s.conservation_status = 'Vulnerable'
+order by rc.Reserve_animal_count desc;
+
+-- 11. Identify every animal whose collar was fitted more than two years ago — these units are approaching the end of their expected working life and should be flagged for replacement. 
+select animal_id,tag_code,collar_fitted_date
+from Animals
+where collar_fitted_date < date_sub(curdate(), interval 2 year);
+
+-- 12. Find the lowest battery level ever recorded across all collars — that particular device may need an urgent field swap. 
+select 
+min(battery_level_pct) as low_battery
+from gpslogs;
+
+-- 13. A ranger wants to know which day of the week sees the most recorded animal movement, purely to plan patrol shifts more efficiently. 
+Select DAYNAME(log_datetime) as day_name,
+COUNT(*) as count
+from gpslogs
+Group By DAYNAME(log_datetime)
+Order By count DESC;
+
+-- 14. The dashboard team wants something they can plug straight into their reporting tool that always reflects each reserve's current animal count and average battery health, without re-deriving it manually each time. 
+Create view reserve_summary as
+select r.reserve_id,r.reserve_name,
+COUNT(distinct a.animal_id) as animal_count,
+AVG(g.battery_level_pct) as average_battery
+from reserves r
+inner join animals a
+on r.reserve_id = a.reserve_id
+inner join gpslogs g
+on a.animal_id = g.animal_id
+group by r.reserve_id,
+r.reserve_name;
+select * from reserve_summary;
+
+-- 15. Pull every GPS log recorded during the month of June this year, to study how the tracked animals behaved during the onset of monsoon rains. 
+select *
+from gpslogs
+where year(log_datetime) = year(CURDATE())
+and month(log_datetime) = 6;
+
+ -- 16. For each species, build a running count of how many animals have been collared over time, ordered by fitting date, to visualize how the programme has grown.
+select species_id,animal_id,collar_fitted_date,
+COUNT(*) over (
+partition by species_id
+order by collar_fitted_date
+) as running_count
+from animals;
+
+-- 17. Prepare a field report listing every animal along with its species name and the reserve it currently roams in, all on a single line per animal. 
+select a.animal_id,a.tag_code,s.species_name,r.reserve_name
+from animals a
+inner join species s
+on a.species_id = s.species_id
+inner join reserves r
+on a.reserve_id = r.reserve_id;
+
+-- 18. The system currently lets someone log a battery level of 150% by mistake. What change would permanently make this impossible going forward? 
+alter table Gpslogs 
+add constraint Check_level
+check (battery_level_pct between 0 and 100);
+
+-- 19. For a specific animal that's causing concern, work out how many hours have passed between its very first logged position and its most recent one, to check whether the collar is still reporting normally. 
+select animal_id,
+timestampdiff(
+HOUR,
+MIN(log_datetime),
+MAX(log_datetime)
+) as hours_between
+from gpslogs
+group by animal_id;
+
+-- 20. For each animal, work out how many days have passed since its collar was first fitted — this determines which ones are due for the routine 180-day battery check. 
+select animal_id,collar_fitted_date,
+datediff(curdate(),collar_fitted_date) as Days_fitted
+from Animals
+where datediff(curdate(),collar_fitted_date)>=180;
+
+-- 21. Flag each reserve as 'Overcrowded', 'Balanced', or 'Under-monitored' based on how many animals are currently tracked there relative to the reserve's area. 
+select r.reserve_name,r.area_sq_km,
+count(a.animal_id) as Total_animal,
+count(a.animal_id) / r.area_sq_km as Animals_per_area,
+case when count(a.animal_id) / r.area_sq_km > 0.10 then 'Overcrowded'
+when count(a.animal_id) / r.area_sq_km >=0.05 then 'Balanced'
+else 'Under-monitored'
+end as Monitoring_status
+from reserves r 
+left join animals a 
+on r.reserve_id = a.reserve_id
+group by r.reserve_id,r.reserve_name,r.area_sq_km;
+
+-- 22. For the upcoming funding proposal, work out the average estimated age of every Critically Endangered animal currently in the system. 
+select 
+avg(a.estimated_age) as Average_age
+from Animals a 
+inner join Species s 
+on a.species_id = s.species_id 
+where s.conservation_status = 'Critically Endangered';
+
+-- 23. Label each collar's current battery level as 'Critical' (below 15%), 'Low' (15–40%), or 'Healthy' (above 40%), so field teams instantly know which ones need urgent attention. 
+select animal_id,battery_level_pct,
+case 
+when battery_level_pct < 15 then 'Critical'
+when battery_level_pct between 15 and 40 then 'Low'
+else 'Healthy'
+end as Battery_level_status
+from gpslogs;
+
+-- 24. Identify which reserves have recorded an average animal speed above 15 km/h over the last month, which could point to unusual stress or fleeing behaviour spreading across the local population. 
+select a.reserve_id,
+round(avg(g.speed_kmph),2) as Average_speed_kmph
+from animals a 
+inner join gpslogs g 
+on a.animal_id = g.animal_id
+where g.log_datetime >= date_sub(curdate(),interval 1 month)
+group by a.reserve_id
+having avg(g.speed_kmph)>15
+order by Average_speed_kmph desc;
+
+-- 25. For each species, count the number of individuals currently being tracked, and highlight any species where fewer than 10 individuals are monitored — a conservation 
+-- priority signal. 
+select s.species_name,
+count(a.animal_id) as Total_animal
+from species s 
+inner join animals a 
+on s.species_id = a.species_id
+group by s.species_name 
+having count(a.animal_id) <10;
+
+-- 26. For each animal, flag any of its own GPS logs where the recorded speed is noticeably higher than that same animal's
+-- own typical speed — a possible burst of unusual activity worth a closer look.  
+select g.log_id,g.animal_id,g.speed_kmph,
+round(avg(g.speed_kmph) over (partition by g.animal_id),2) as Average_animal_speed,
+case 
+when g.speed_kmph > avg(g.speed_kmph) over (partition by g.animal_id)*1.5
+then 'Unusually High'
+else 'Normal'
+end as Activity_flag
+from gpslogs g;
+
+-- 27. Track down which reserve is home to the animal that recorded the single highest speed anywhere in the entire dataset. 
+select a.animal_id,a.reserve_id,g.speed_kmph
+from gpslogs g 
+inner join animals a 
+on g.animal_id = a.animal_id 
+order by g.speed_kmph desc
+limit 1;
+
+-- 28. Rangers constantly search GPS logs using a specific animal's ID to pull up its full movement history instantly, but this
+--  lookup has started to feel sluggish now that the log table has grown into the thousands. What would you do about it? 
+ create index Idx_gpslogs_animal_id
+on gpslogs (animal_id);
+select * 
+from gpslogs 
+where animal_id = 120;
+
+-- 29. An animal previously assumed dead has just been confirmed alive and re-collared in the field. Reflect this by recording its new collar-fitting date. 
+update animals 
+set collar_fitted_date = curdate()
+where animal_id = 120;
+
+-- 30. For a laminated field handout, combine each animal's tag code and species name into a single readable label, separated by a dash. 
+select CONCAT(
+a.tag_code,' - ',s.species_name
+) as animal_label
+from animals a
+inner join species s
+on a.species_id = s.species_id;
+
+-- 31. Work out how many animals have been fitted with collars in each individual reserve, to see where the tracking effort is concentrated. 
+select r.reserve_name,
+COUNT(a.animal_id) as animal_count
+from reserves r
+inner join animals a
+on r.reserve_id = a.reserve_id
+group by r.reserve_id,r.reserve_name;
+
+-- 32. Work this out in two stages: first tally up each animal's total number of logs this month, then use that to shortlist animals logged fewer than
+--   3 times — these may have gone quiet. 
+with Monthly_logs as 
+(select animal_id,
+count(*) as Total_logs
+from gpslogs
+where month(log_datetime)= month(curdate())
+and year(log_datetime)= year(curdate())
+group by animal_id)
+select animal_id,Total_logs
+from Monthly_logs
+where Total_logs <3;
+
+-- 33. Estimate how many field battery-replacement trips are needed this month by finding the average battery level currently across all collars. 
+Select avg(battery_level_pct) as average_battery
+from gpslogs;
+
+-- 34. For every species being tracked, list out all the reserves where at least one individual of that species currently carries a collar. 
+select distinct 
+s.species_name,
+r.reserve_name
+from animals a
+inner join species s
+on a.species_id = s.species_id
+inner join reserves r
+on a.reserve_id = r.reserve_id
+order by s.species_name,r.reserve_name;
+
+-- 35. List all animals currently based in one of the three largest reserves by area. 
+SELECT a.animal_id,a.tag_code,r.reserve_name,r.area_sq_km
+FROM animals a
+inner JOIN reserves r
+ON a.reserve_id = r.reserve_id
+WHERE a.reserve_id IN (
+SELECT reserve_id
+FROM reserves
+ORDER BY area_sq_km DESC);
+
+-- 36. Identify any animal that has never had a single GPS ping recorded against it — this is a critical operational failure that needs immediate attention. 
+SELECT a.animal_id,a.tag_code
+FROM animals a
+LEFT JOIN gpslogs g
+ON a.animal_id = g.animal_id
+WHERE g.animal_id IS NULL;
+
+-- 37. The programme director wants a single number for the board meeting: exactly how many animals are currently being tracked across the entire alliance. 
+select count(*) as Total_Animals_tracked
+from Animals;
+
+-- 38. Going forward, the programme wants to record which manufacturer supplied each animal's GPS collar. Adjust the animal records so this detail can be captured. 
+alter table Animals 
+add column Collar_Manufacturer varchar(100);
+
+-- 39. Two rangers in different reserves accidentally try to register the same tag code for two different animals on the same day. What should stop this from happening? 
+alter table Animals
+add constraint Unique_tag_per_day
+unique (tag_code,collar_fitted_date);
+
+-- 40. For every reserve, surface the single fastest animal recorded there without losing any of the reserve's other animal rows in the process — every anima
+--   l should still show up in the result. 
+select a.animal_id,a.reserve_id,g.speed_kmph,
+case
+when g.speed_kmph = max(g.speed_kmph) over 
+(partition by a.reserve_id)
+then 'Fastest'
+else ''
+end as Fastest_animal
+from animals a 
+left join gpslogs g 
+on a.animal_id = g.animal_id;
+
+-- 41. Find the single highest speed ever recorded by any collar so far — this reading could point to a chase, an escape, or a predator encounter worth investigating. 
+select max(speed_kmph) as Highest_speed_recorded
+from gpslogs;
+
+-- 42. Count the animals collared in each reserve, and shortlist only the reserves currently tracking more than 15 animals — these may need additional ranger support. 
+select reserve_id,
+count(*) as Animal_count
+from Animals 
+group by reserve_id
+having count(*) >15;
+
+-- 43. Group all logs by reserve and identify which reserves have an average collar battery level below 20% — these need a battery-replacement drive scheduled immediately. 
+select a.reserve_id,
+avg(g.battery_level_pct) as Average_battery_level
+from animals a 
+inner join gpslogs g
+on a.animal_id = g.animal_id
+group by a.reserve_id 
+having avg(g.battery_level_pct) <20;
+
+-- 44. The annual conservation report needs a single consolidated result: for every reserve, the number of animals it holds, their average age,
+--  the average battery health of their collars, and a clear flag for any reserve whose average battery health has dropped below an acceptable level.
+SELECT r.reserve_name,COUNT(DISTINCT a.animal_id) AS animal_count,AVG(a.estimated_age) AS average_age,
+AVG(g.battery_level_pct) AS average_battery,
+CASE WHEN AVG(g.battery_level_pct) < 20 THEN 'Below Acceptable Level'
+ELSE 'Acceptable'
+END AS battery_flag
+FROM reserves r
+inner JOIN animals a
+ON r.reserve_id = a.reserve_id
+inner JOIN gpslogs g
+ON a.animal_id = g.animal_id
+GROUP BY r.reserve_id,r.reserve_name;
+
+--  45. A recent firmware change altered how battery percentage gets reported by one collar model. Correct all currently stored 
+-- battery readings for the affected reserve so they reflect the new calibration. 
+update gpslogs g 
+inner join Animals a 
+on g.animal_id = a.animal_id
+set g.battery_level_pct = g.battery_level_pct * 0.9 
+where a.reserve_id = 2;
+
+-- 46. Produce a single combined list of every reserve and every animal together — including reserves with zero animals and any animal record
+-- that's somehow missing its reserve — so nothing gets left out of the audit. 
+select r.reserve_id,r.reserve_name,a.animal_id
+from reserves r 
+left join animals a 
+on r.reserve_id = a.reserve_id
+union
+select r.reserve_id,r.reserve_name,a.animal_id
+from reserves r 
+right join animals a 
+on r.reserve_id = a.reserve_id
+order by reserve_id,animal_id;
+
+-- 47. Find every species that has at least one tracked individual living in a reserve that was established before the year 2000. 
+SELECT DISTINCT s.species_name,r.reserve_name,r.established_year
+FROM animals a
+inner JOIN species s
+ON a.species_id = s.species_id
+inner JOIN reserves r
+ON a.reserve_id = r.reserve_id
+WHERE r.established_year < 2000;
+
+-- 48. After a recent data cleanup, a few GPS logs may now point to an animal ID that no longer exists in the system. Track down these orphaned records. 
+SELECT g.*
+FROM gpslogs g
+LEFT JOIN animals a
+       ON g.animal_id = a.animal_id
+WHERE a.animal_id IS NULL;
+
+-- 49. Calculate a combined activity score per animal using its log count and average speed as an intermediate result, 
+--  then use that to rank reserves by overall animal activity. 
+WITH animal_activity AS (
+SELECT animal_id,
+COUNT(*) AS log_count,
+AVG(speed_kmph) AS average_speed,
+COUNT(*) * AVG(speed_kmph) AS activity_score
+FROM gpslogs
+GROUP BY animal_id)
+SELECT r.reserve_name,SUM(aa.activity_score) AS reserve_activity_score
+FROM animal_activity aa
+inner JOIN animals a
+ON aa.animal_id = a.animal_id
+inner JOIN reserves r
+ON a.reserve_id = r.reserve_id
+GROUP BY r.reserve_id,r.reserve_name
+ORDER BY reserve_activity_score DESC;
+-- 50. A batch of very old GPS logs from a decommissioned first-generation collar model is cluttering the database and is no longer needed for any analysis. 
+-- Remove exactly those records and nothing else. 
+DELETE FROM gpslogs
+WHERE log_datetime < '2020-01-01';
+
+-- 51. A junior data-entry volunteer tries to save a new animal record without specifying which species it belongs to. What should prevent that i
+-- ncomplete record from being saved? 
+ALTER TABLE animals
+MODIFY species_id INT NOT NULL;
+
+-- 52. Build an intermediate reserve-by-reserve average battery level, then use it to flag every reserve sitting below the alliance-wide average. 
+WITH reserve_battery AS (
+SELECT a.reserve_id,
+AVG(g.battery_level_pct) AS reserve_avg_battery
+FROM animals a
+inner JOIN gpslogs g
+ON a.animal_id = g.animal_id
+GROUP BY a.reserve_id)
+SELECT r.reserve_name,rb.reserve_avg_battery
+FROM reserve_battery rb
+inner JOIN reserves r
+ON rb.reserve_id = r.reserve_id
+WHERE rb.reserve_avg_battery < (
+SELECT AVG(battery_level_pct)
+FROM gpslogs);
+
+-- 53. The reporting dashboard constantly filters by reserve and date range together, and the two filters are almost always used side 
+-- by side.How would you set the database up so this specific combined search runs faster? 
+CREATE INDEX idx_gps_animal_datetime
+ON gpslogs(animal_id, log_datetime);
+
+-- 54. A bulk import left several reserve names with accidental leading or trailing spaces. Clean these up before they go into the annual printed report. 
+select reserve_id,reserve_name,
+trim(reserve_name) as Cleaned_name
+from Reserves 
+where reserve_name = trim(reserve_name);
+update reserves 
+set reserve_name = trim(reserve_name)
+where reserve_name <> trim(reserve_name);
+
+-- 55. The rangers' mobile app needs a simplified, always-ready snapshot showing each animal's tag code, species, reserve, and 
+-- latest battery level, without the field team having to reconstruct the full picture from scratch every single time. 
+create view animal_latest_snapshot as 
+select a.tag_code,a.species_id,r.reserve_name,g.battery_level_pct as Latest_battery
+from animals a 
+inner join reserves r 
+on a.reserve_id = r.reserve_id
+inner join gpslogs g 
+on a.animal_id = g.animal_id 
+where g.log_datetime = 
+(select max(g1.log_datetime)
+from gpslogs g1
+where g1.animal_id = g.animal_id);
+select * from animal_latest_snapshot;
+drop view animal_latest_snapshot;
+
+-- 56. The donor relations team keeps asking for the same list — every Critically Endangered animal with its reserve and species details.
+-- Set up something they can pull directly, without you explaining the underlying tables every time they ask. 
+create view CriticallyEndangeredAnimals as
+select a.animal_id,a.tag_code,s.species_name,r.reserve_name
+from Animals a
+inner join Species s
+on a.species_id = s.species_id
+inner join Reserves r
+on a.reserve_id = r.reserve_id
+where s.conservation_status = 'Critically Endangered';
+select * from CriticallyEndangeredAnimals;
+
+-- 57. The data team wants to understand overall data volume: how many GPS pings have been logged in total since the programme began? 
+SELECT COUNT(*) AS total_gps_pings
+FROM GPSLogs;
+
+-- 58. A field officer accidentally types an animal's estimated age as a negative number. How do you make sure this kind of entry is rejected the moment it's submitted? 
+ALTER TABLE Animals
+ADD CONSTRAINT chk_estimated_age
+CHECK (estimated_age >= 0);
+
+-- 59. Split all tracked animals into three roughly equal age tiers, to help the biology team design three different age-specific conservation strategies. 
+select animal_id,species_id,estimated_age,
+case when estimated_age <15 then 'Young'
+when estimated_age between 15 and 30 then 'Middle'
+else 'Old'
+end as age_tier
+from animals;
+
+-- 60. Pull every GPS log belonging specifically to the one animal that recorded the lowest battery level ever logged in the system. 
+select * 
+from gpslogs 
+where animal_id = 
+(select animal_id 
+from gpslogs 
+order by battery_level_pct asc
+limit 1);
+
+-- 61. A data-entry mistake caused an entire reserve's animals to be logged under the wrong reserve altogether. Correct this in one sweep rather than animal by animal. 
+describe animals;
+update animals 
+set reserve_id = 3
+where reserve_id= 2;
+
+-- 62. For each animal, show what the very next recorded speed reading will be, placed right alongside the current one, to help spot a pattern
+-- building up across consecutive readings. 
+select animal_id,log_datetime,speed_kmph,
+lead(speed_kmph) over (partition by animal_id order by log_datetime)
+as Next_speed 
+from gpslogs;
+
+-- 63. Within each reserve, order its animals by estimated age, oldest first, to identify individuals that might need closer health monitoring. 
+select reserve_id,animal_id,estimated_age 
+from Animals 
+order by estimated_age desc;
+
+-- 64. A new GPS ping arrives tagged to an animal ID that was never registered in the system. Explain what should happen to this record, 
+-- and why it must not be allowed to slip through quietly. 
+insert into Gpslogs (log_id, animal_id, log_datetime,speed_kmph,battery_level_pct)
+values (10001,9999,now(),10.5,80); 
+
+-- 65. Cross-check reserves against recent activity to identify any reserve where absolutely no GPS pings have come
+-- in during the past seven days — this could mean a communication blackout or a bigger problem on the ground. 
+select distinct a.reserve_id
+ from animals a 
+ left join gpslogs g 
+ on a.animal_id = g.animal_id
+ and g.log_datetime >= curdate() - interval 7 day 
+ where g.log_id is null;
+    
+-- 66. Across the entire programme, order every GPS log by recorded speed to surface the season's most extreme movement events,
+-- making sure that if two logs share the exact same top speed, neither one gets unfairly skipped in the ordering. 
+select log_id,animal_id,speed_kmph,
+ dense_rank() over (order by speed_kmph desc) as Speed_rank
+ from gpslogs 
+ order by speed_rank;
+ 
+-- 67. Group the collaring activity by the exact quarter of the year each animal was fitted, to compare how collaring effort has changed across 
+--   different phases of the programme. 
+ select 
+ year(collar_fitted_date) as Fitted_year,
+ quarter(collar_fitted_date) as Fitted_Quarter,
+ count(*) as Animals_fitted
+ from animals 
+ where collar_fitted_date is not null
+ group by year(collar_fitted_date),Quarter (collar_fitted_date)
+ order by Fitted_year,Fitted_Quarter;
+ 
+-- 68. For each animal, looking at its logs in date order, show what its battery level was on the reading immediately before the 
+-- current one — this helps catch any sudden, unexplained battery drop.
+SELECT animal_id,log_datetime,battery_level_pct AS current_battery,
+LAG(battery_level_pct) OVER (PARTITION BY animal_id ORDER BY log_datetime) AS previous_battery_pct
+FROM GPSLogs;
+
+-- 69. A new field researcher is joining the team and should only be able to look at animal and GPS data, never change any of it. Set up their access accordingly. 
+CREATE USER 'field_researcher'@'localhost'
+IDENTIFIED BY 'password';
+
+GRANT SELECT
+ON WildTrack.*
+TO 'field_researcher'@'localhost';
+-- 70. List every animal along with its most recent recorded coordinates, making sure animals whose collars haven't reported anything yet still appear on the list rather
+--  than disappearing. 
+WITH LatestLogs AS (
+SELECT *,ROW_NUMBER() OVER (PARTITION BY animal_idORDER BY log_datetime DESC) AS rn
+FROM GPSLogs)
+SELECT a.animal_id,a.tag_code,l.latitude,l.longitude
+FROM Animals a
+LEFT JOIN LatestLogs l
+ON a.animal_id = l.animal_id
+AND l.rn = 1;
+-- 71. The lead veterinarian needs the ability to update animal health-related details directly, 
+-- unlike the rest of the field staff. Set up an access level that reflects this difference. 
+
+-- 72. Identify every animal that belongs to whichever single species currently has the highest number of tracked individuals. 
+SELECT a.animal_id,a.tag_code,s.species_name
+FROM Animals a
+inner JOIN Species s
+ON a.species_id = s.species_id
+WHERE a.species_id = (
+SELECT species_id
+FROM Animals
+GROUP BY species_id
+ORDER BY COUNT(*) DESC
+LIMIT 1);
+
+-- 73. After several months and a few team changes, nobody quite remembers what was set up to speed up lookups on the GPS log table. Check what's currently in place. 
+show index from gpslogs;
+
+--  74. Based on recorded speed, tag each GPS log as 'Resting', 'Moving', or 'Fast Movement', to help spot unusual chase or escape events buried in the raw data. 
+select log_id,speed_kmph,
+case 
+when speed_kmph <15 then 'Resting'
+when speed_kmph between 15 and 30 then 'Moving'
+else 'Fast Movement' 
+end as Activity 
+from gpslogs;
+
+-- 75. For a nocturnal-behaviour study, pull all GPS logs that were recorded between 6 PM and 6 AM. 
+select * from gpslogs 
+where hour(log_datetime) >=18 or hour(log_datetime) <6;  
+
+
+
+
 
